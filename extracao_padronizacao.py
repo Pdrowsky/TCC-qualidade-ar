@@ -99,6 +99,6 @@ data = data.drop(columns=['ESTAÇÃO'])
 print(data.columns)
 
 # save data df to csv 
-data_path = r'C:\Users\pedro\Desktop\UFSC\TCC\TCC-qualidade-ar\processed_data'
-data.to_csv(os.path.join(data_path, 'data.csv'), sep=',', encoding='utf-8', index=False)
+data_path = r'C:\Users\pedro\Desktop\UFSC\TCC\TCC-qualidade-ar\proccessed_data\data.csv'
+data.to_csv(data_path, sep=',', encoding='utf-8', index=False)
 
