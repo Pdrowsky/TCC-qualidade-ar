@@ -1,27 +1,38 @@
 import pandas as pd
-import numpy as np
 
-# load csv file
+# Load data in chunks if memory is tight (optional)
 file_path = r'C:\Users\pedro\Desktop\UFSC\TCC\TCC-qualidade-ar\proccessed_data\data.csv'
-data = pd.read_csv(file_path, sep=',', encoding='utf-8')
+data = pd.read_csv(file_path)
 
-
-# create date time column
+# Convert date column first
 data['Data'] = pd.to_datetime(data['Data'], format='%Y-%m-%d')
 
-# locate rows with only HH:MM data to add seconds
-hora = data['Hora']
-linhas_horaminuto = hora.str.count(':') == 1
-hora.loc[linhas_horaminuto] += ':00'
-hor = hora.replace('24:00:00', '00:00:00')
+# Process time column with vectorized operations
+# Convert to string and clean time data
+data['Hora'] = data['Hora'].astype(str)
 
-data['Hora'] = pd.to_datetime(data['Hora'], format='%H:%M:%S').dt.time
-data['Data_Hora'] = pd.to_datetime(data['Data'].astype(str) + ' ' + data['Hora'].astype(str), format='%Y-%m-%d %H:%M:%S')
+# Add seconds to incomplete times
+data['Hora'] = data['Hora'].str.replace(r'(\d+:\d{2})(?::\d{2})?$', r'\1:00', regex=True)
 
-# group by Estacao and Poluente and get the first and last date
-data_grouped = data.groupby(['Estacao', 'Poluente']).agg({'Data_Hora': ['min', 'max']}).reset_index()
-data_grouped.columns = ['Estacao', 'Poluente', 'Data_Hora_Inicio', 'Data_Hora_Fim']
+# Handle 24:00:00 cases
+is_24h = data['Hora'].str.contains('24:00:00')
+data['Hora'] = data['Hora'].str.replace('24:00:00', '00:00:00')
 
-# save the result to a new csv file on the same folder
+# Increment date where we had 24:00:00
+data.loc[is_24h, 'Data'] += pd.DateOffset(days=1)
+
+# Create datetime column using vectorized operation
+data['Data_Hora'] = pd.to_datetime(
+    data['Data'].dt.strftime('%Y-%m-%d') + ' ' + data['Hora'],
+    format='%Y-%m-%d %H:%M:%S'
+)
+
+# Group and aggregate
+data_grouped = data.groupby(['Estacao', 'Poluente'], as_index=False).agg(
+    Data_Hora_Inicio=('Data_Hora', 'min'),
+    Data_Hora_Fim=('Data_Hora', 'max')
+)
+
+# Save results
 output_path = r'C:\Users\pedro\Desktop\UFSC\TCC\TCC-qualidade-ar\proccessed_data\data_funcionamento.csv'
-data_grouped.to_csv(output_path, sep=',', encoding='utf-8', index=False)
+data_grouped.to_csv(output_path, index=False)
