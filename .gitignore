@@ -1,3 +1,6 @@
 venv/
 raw_data/
 *.csv
+__pycache__
+*.parquet
+old/
