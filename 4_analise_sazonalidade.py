@@ -31,6 +31,61 @@ for file_name in os.listdir(DATA_DIR):
         6: 'Inverno', 7: 'Inverno', 8: 'Inverno',
         9: 'Primavera', 10: 'Primavera', 11: 'Primavera'
     })
+
+    print(f"Gerando tabela de resumo para {poluente}...")
+    
+    # Lista de colunas de violação
+    padroes_exceed = [col for col in df.columns if col.startswith('exceed_')]
+    padroes = [col.split('_')[1] for col in padroes_exceed]
+    
+    # Criar tabela resumo
+    resumo_data = []
+    
+    # Para cada padrão de violação
+    for padrao_col, padrao_nome in zip(padroes_exceed, padroes):
+        # Filtrar apenas violações deste padrão
+        violacoes = df[df[padrao_col] == 1]
+        total_violacoes = len(violacoes)
+        
+        if total_violacoes > 0:
+            # Contar violações por mês
+            violacoes_por_mes = violacoes.groupby('Mes').size()
+            violacoes_por_mes = violacoes_por_mes.reindex(range(1, 13), fill_value=0)
+            
+            # Adicionar ao resumo
+            resumo_data.append({
+                'Poluente': poluente,
+                'Padrão': padrao_nome,
+                'Total_Violações': total_violacoes,
+                **{f'Mes_{mes}': count for mes, count in violacoes_por_mes.items()}
+            })
+    
+    # Criar DataFrame com os resultados
+    if resumo_data:
+        df_resumo = pd.DataFrame(resumo_data)
+        
+        # Renomear colunas de meses
+        meses_map = {i: pd.to_datetime(f'2023-{i}-1').strftime('%b') for i in range(1, 13)}
+        df_resumo = df_resumo.rename(columns={
+            f'Mes_{mes_num}': meses_map[mes_num] for mes_num in range(1, 13)
+        })
+        
+        # Adicionar linha com total de registros
+        total_registros = pd.DataFrame([{
+            'Poluente': poluente,
+            'Padrão': 'TOTAL_REGISTROS',
+            'Total_Violações': len(df),
+            **{meses_map[i]: len(df[df['Mes'] == i]) for i in range(1, 13)}
+        }])
+        
+        df_resumo = pd.concat([df_resumo, total_registros], ignore_index=True)
+        
+        # Salvar tabela
+        resumo_path = os.path.join(OUTPUT_DIR, f"resumo_violacoes_{poluente}.csv")
+        df_resumo.to_csv(resumo_path, index=False, encoding='utf-8-sig')
+        print(f"  Tabela salva: {resumo_path}")
+    else:
+        print(f"  Nenhuma violação encontrada para {poluente}")
     
     # Calcular estatísticas mensais
     media_mensal = df.groupby('Mes')['Valor_Padronizado'].mean().reset_index()
@@ -198,5 +253,7 @@ for file_name in os.listdir(DATA_DIR):
         plt.tight_layout()
         plt.savefig(os.path.join(OUTPUT_DIR, f"taxa_violacoes_{poluente}.png"), dpi=200)
         plt.close()
+
+    
 
 print("Análise de sazonalidade concluída! Resultados salvos em:", OUTPUT_DIR)
