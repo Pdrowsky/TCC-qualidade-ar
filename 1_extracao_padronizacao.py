@@ -1,29 +1,84 @@
 import os
 import pandas as pd
 import numpy as np
+from datetime import datetime
+def find_date_formats(df, column):
+    """
+    Identifies date formats used in a column of string dates.
+
+    Parameters:
+        df (pd.DataFrame): The DataFrame containing the dates.
+        column (str): The column name to analyze.
+
+    Returns:
+        dict: A dictionary mapping each unique date string to its matched format.
+    """
+    possible_formats = [
+        "%Y-%m-%d",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y/%m/%d",
+        "%B %d, %Y",
+        "%d-%b-%Y",
+        "%d %B %Y",
+        "%Y.%m.%d",
+        "%Y %m %d",
+        "%m/%d/%y",
+        "%Y-%m-%d %H:%M:%S",
+    ]
+
+    format_matches = {}
+
+    for date_str in df[column].dropna().unique():
+        matched_format = None
+        for fmt in possible_formats:
+            try:
+                _ = datetime.strptime(date_str, fmt)
+                matched_format = fmt
+                break
+            except ValueError:
+                continue
+        format_matches[date_str] = matched_format or "Unrecognized"
+
+    # Print results
+    unique_formats = set(format_matches.values())
+    print("Unique formats found:")
+    for fmt in unique_formats:
+        print(fmt)
+
+    return format_matches
 
 raw_data_path = r'C:\Users\pedro\Desktop\UFSC\TCC\TCC-qualidade-ar\raw_data'
 
 # Extrair todos os dados
 data_dict = {}
 
+# Processar apenas diretórios (cada estado)
 for folder in os.listdir(raw_data_path):
-    state = folder
+    folder_path = os.path.join(raw_data_path, folder)
+    
+    if not os.path.isdir(folder_path):
+        continue  # Ignorar arquivos, processar apenas pastas
+        
+    state = folder  # Abreviação do estado (nome da pasta)
     state_data = []
     
-    for file in os.listdir(os.path.join(raw_data_path, folder)):
-        file_path = os.path.join(raw_data_path, folder, file)
-        df = pd.read_csv(file_path, sep=',', encoding='latin1')
+    for file in os.listdir(folder_path):
+        file_path = os.path.join(folder_path, file)
+        
+        # Ler arquivo CSV
+        df = pd.read_csv(file_path, sep=',', encoding='latin1', dtype=str)
+        
+        # Adicionar coluna de estado imediatamente
+        df['Estado'] = state
+        
         state_data.append(df)
 
     state_data = pd.concat(state_data, ignore_index=True)
     data_dict[state] = state_data
 
 # Concatenar tudo em um único DataFrame
-data = pd.DataFrame()
-for state, records in data_dict.items():
-    records['state'] = state
-    data = pd.concat([data, records], ignore_index=True)
+data = pd.concat(data_dict.values(), ignore_index=True)
 
 # Preencher coluna 'Data' onde for nula com 'ï»¿Data'
 if 'ï»¿Data' in data.columns:
@@ -49,6 +104,8 @@ unidades_corretas = {
 }
 data['Unidade'] = data['Unidade'].map(unidades_corretas).fillna(data['Unidade'])
 
+data_before_cleaning = data.copy()
+
 # Converter 'Valor' para numérico
 def clean_numeric(value):
     if isinstance(value, str):
@@ -65,6 +122,8 @@ def clean_numeric(value):
 
 data['Valor'] = data['Valor'].apply(clean_numeric)
 data['Valor'] = pd.to_numeric(data['Valor'], errors='coerce')
+
+data_after_cleaning = data.copy()
 
 # Massas molares
 massa_molar = {
@@ -151,6 +210,9 @@ if data['Valor_Padronizado'].isna().sum() > 0:
 # Salvar dados por poluente
 parquet_path = r'C:\Users\pedro\Desktop\UFSC\TCC\TCC-qualidade-ar\proccessed_data\data_poluentes_parquet'
 os.makedirs(parquet_path, exist_ok=True)
+
+co_df = data[data['Poluente'] == 'CO'].copy()
+co_df_only_converted = co_df[co_df['Valor_Padronizado'] > 40]
 
 for poluente in data['Poluente'].unique():
     pollutant_data = data[data['Poluente'] == poluente].copy()

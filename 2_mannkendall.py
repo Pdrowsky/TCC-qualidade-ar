@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 # Configurações
 INPUT_DIR = r"C:\Users\pedro\Desktop\UFSC\TCC\TCC-qualidade-ar\z_chunks_com_loc"
-OUTPUT_DIR = r"C:\Users\pedro\Desktop\UFSC\TCC\TCC-qualidade-ar\z_testes_mannkendall"
+OUTPUT_DIR = r"C:\Users\pedro\Desktop\UFSC\TCC\TCC-qualidade-ar\z_testes_mannkendall_ano"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def calculate_trend(series):
@@ -56,6 +56,9 @@ for poluente_dir in os.listdir(INPUT_DIR):
     for file_path in tqdm(all_files, desc=f"Carregando {poluente_dir}"):
         try:
             df_chunk = pd.read_parquet(file_path)
+            # Verificar se a coluna Estado existe
+            if 'Estado' not in df_chunk.columns:
+                print(f"  ATENÇÃO: 'Estado' não encontrado em {file_path}")
             df_list.append(df_chunk)
         except Exception as e:
             print(f"  Erro ao carregar {file_path}: {str(e)}")
@@ -67,10 +70,9 @@ for poluente_dir in os.listdir(INPUT_DIR):
     df = pd.concat(df_list, ignore_index=True)
     
     # Converter coordenadas para float
-    if df['Latitude'].dtype == 'object':
-        df['Latitude'] = df['Latitude'].str.replace(',', '.').astype(float)
-    if df['Longitude'].dtype == 'object':
-        df['Longitude'] = df['Longitude'].str.replace(',', '.').astype(float)
+    for coord in ['Latitude', 'Longitude']:
+        if coord in df.columns and df[coord].dtype == 'object':
+            df[coord] = df[coord].str.replace(',', '.').astype(float)
     
     # Passo 1: Agregar dados diariamente (média diária)
     print(f"Aggregando dados diariamente para {poluente_dir}...")
@@ -84,16 +86,55 @@ for poluente_dir in os.listdir(INPUT_DIR):
         print(f"  Nenhuma coluna de data encontrada para {poluente_dir}")
         continue
     
-    # Calcular média diária por estação
-    daily_agg = df.groupby(['Estacao', 'Latitude', 'Longitude', 'Data'])['Valor_Padronizado'].mean().reset_index()
+    # Verificar se a coluna Estado está presente
+    if 'Estado' not in df.columns:
+        print(f"  ERRO CRÍTICO: Coluna 'Estado' não encontrada para {poluente_dir}")
+        continue
+
+    # 1. Converter Data para datetime e criar colunas auxiliares
+    df['Data'] = pd.to_datetime(df['Data'])
+    df['Ano'] = df['Data'].dt.year
+    df['Mes'] = df['Data'].dt.month
+    df['Dia'] = df['Data'].dt.date  # apenas parte da data, sem hora
+
+    # 2. Etapa hora → dia: média diária se dia tiver ≥ 18 horas válidas
+    df_valid_hours = (
+        df.groupby(['Estado', 'Estacao', 'Latitude', 'Longitude', 'Dia'])
+        .agg(
+            Valor_Medio_Dia=('Valor_Padronizado', 'mean'),
+            n_horas=('Valor_Padronizado', 'count')
+        )
+        .reset_index()
+    )
+
+    # manter apenas dias com ≥ 18 horas válidas
+    df_valid_days = df_valid_hours[df_valid_hours['n_horas'] >= 18].copy()
+    df_valid_days['Ano'] = pd.to_datetime(df_valid_days['Dia']).dt.year
+    df_valid_days['Mes'] = pd.to_datetime(df_valid_days['Dia']).dt.month
+
+    # 3. Etapa dia → mês: média mensal se mês tiver ≥ 20 dias válidos
+    monthly_agg = (
+        df_valid_days
+        .groupby(['Estado', 'Estacao', 'Latitude', 'Longitude', 'Ano', 'Mes'])
+        .agg(
+            Valor_Padronizado=('Valor_Medio_Dia', 'mean'),
+            n_dias_validos=('Dia', 'nunique')
+        )
+        .reset_index()
+    )
+
+    # manter apenas meses com ≥ 20 dias válidos
+    monthly_agg = monthly_agg[monthly_agg['n_dias_validos'] >= 20].copy()
+
     
     # Passo 2: Calcular tendências usando dados diários agregados
     trends = []
-    grouped = daily_agg.groupby(['Estacao', 'Latitude', 'Longitude'])
+    # Agrupar por Estado + Estação (MODIFICADO)
+    grouped = monthly_agg.groupby(['Estado', 'Estacao', 'Latitude', 'Longitude'])
     
     print(f"Calculando tendências para {len(grouped)} estações usando dados diários...")
-    for (estacao, lat, lon), group in tqdm(grouped, desc=f"Processando {poluente_dir}"):
-        group = group.sort_values('Data')
+    for (estado, estacao, lat, lon), group in tqdm(grouped, desc=f"Processando {poluente_dir}"):
+        group = group.sort_values(['Ano', 'Mes'])
         series = group['Valor_Padronizado'].values
         
         trend_result = calculate_trend(series)
@@ -102,6 +143,7 @@ for poluente_dir in os.listdir(INPUT_DIR):
         
         trends.append({
             'Poluente': poluente_dir,
+            'Estado': estado,  # NOVO CAMPO ADICIONADO
             'Estacao': estacao,
             'Latitude': lat,
             'Longitude': lon,
@@ -123,6 +165,7 @@ for poluente_dir in os.listdir(INPUT_DIR):
     trends_df.to_parquet(output_path)
     print(f"  Tendências salvas: {output_path}")
     print(f"  Estações processadas: {len(trends_df)}")
+    print(f"  Estados representados: {trends_df['Estado'].nunique()}")  # NOVA ESTATÍSTICA
     print(f"  Dias médios por estação: {trends_df['n_dias'].mean():.1f}")
 
 print("\nProcessamento concluído! Dados de tendência salvos em:", OUTPUT_DIR)

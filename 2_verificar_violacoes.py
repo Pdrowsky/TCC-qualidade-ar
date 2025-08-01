@@ -14,9 +14,10 @@ def aggregate_data(df, periodo):
     # converter para numerico
     df['Valor_Padronizado'] = pd.to_numeric(df['Valor_Padronizado'], errors='coerce')
     
+    # MODIFICADO: Incluir 'Estado' em todos os agrupamentos
     if periodo == '24h':
         df['Date'] = df['Data_Hora'].dt.date
-        aggregated = df.groupby(['Estacao', 'Date']).agg(
+        aggregated = df.groupby(['Estado', 'Estacao', 'Date']).agg(  # Adicionado 'Estado'
             Valor_Padronizado=('Valor_Padronizado', 'max'),
             Latitude=('Latitude', 'first'),
             Longitude=('Longitude', 'first')
@@ -24,7 +25,7 @@ def aggregate_data(df, periodo):
         
     elif periodo == 'med. arit. anual':
         df['Year'] = df['Data_Hora'].dt.year
-        aggregated = df.groupby(['Estacao', 'Year']).agg(
+        aggregated = df.groupby(['Estado', 'Estacao', 'Year']).agg(  # Adicionado 'Estado'
             Valor_Padronizado=('Valor_Padronizado', 'mean'),
             Latitude=('Latitude', 'first'),
             Longitude=('Longitude', 'first')
@@ -32,25 +33,25 @@ def aggregate_data(df, periodo):
         
     elif periodo == 'max. med. hor. do dia (1h)':
         df['Date'] = df['Data_Hora'].dt.date
-        aggregated = df.groupby(['Estacao', 'Date', 'Hora']).agg(
+        aggregated = df.groupby(['Estado', 'Estacao', 'Date', 'Hora']).agg(  # Adicionado 'Estado'
             Valor_Padronizado=('Valor_Padronizado', 'mean'),
             Latitude=('Latitude', 'first'),
             Longitude=('Longitude', 'first')
         ).reset_index()
-        aggregated = aggregated.groupby(['Estacao', 'Date']).agg(
+        aggregated = aggregated.groupby(['Estado', 'Estacao', 'Date']).agg(  # Adicionado 'Estado'
             Valor_Padronizado=('Valor_Padronizado', 'max'),
             Latitude=('Latitude', 'first'),
             Longitude=('Longitude', 'first')
         ).reset_index()
         
     elif periodo == 'max. med. mov. do dia (8h)':
-        df = df.sort_values(['Estacao', 'Data_Hora'])
+        df = df.sort_values(['Estado', 'Estacao', 'Data_Hora'])  # Adicionado 'Estado'
         df['rolling_8h'] = (
-            df.groupby('Estacao')['Valor_Padronizado']
+            df.groupby(['Estado', 'Estacao'])['Valor_Padronizado']  # Adicionado 'Estado'
             .rolling(8, min_periods=1).mean()
-            .reset_index(level=0, drop=True))
+            .reset_index(level=[0,1], drop=True))
         df['Date'] = df['Data_Hora'].dt.date
-        aggregated = df.groupby(['Estacao', 'Date']).agg(
+        aggregated = df.groupby(['Estado', 'Estacao', 'Date']).agg(  # Adicionado 'Estado'
             Valor_Padronizado=('rolling_8h', 'max'),
             Latitude=('Latitude', 'first'),
             Longitude=('Longitude', 'first')
@@ -58,7 +59,7 @@ def aggregate_data(df, periodo):
         
     elif periodo == 'med. geom. anual':
         df['Year'] = df['Data_Hora'].dt.year
-        aggregated = df.groupby(['Estacao', 'Year']).agg(
+        aggregated = df.groupby(['Estado', 'Estacao', 'Year']).agg(  # Adicionado 'Estado'
             Valor_Padronizado=('Valor_Padronizado', lambda x: np.exp(np.mean(np.log(x)))),
             Latitude=('Latitude', 'first'),
             Longitude=('Longitude', 'first')
@@ -106,9 +107,9 @@ def run_all(poluente, limite_conama, data_funcionamento):
     if poluente == 'MP2.5':
         poluente = 'MP2,5'
     
-    # Carregar apenas as estações
-    station_query = pl.scan_parquet(all_files).select(['Estacao']).unique().collect()
-    stations = station_query['Estacao'].to_list()
+    # MODIFICADO: Incluir 'Estado' na seleção de colunas
+    station_query = pl.scan_parquet(all_files).select(['Estado', 'Estacao']).unique().collect()
+    stations = station_query[['Estado', 'Estacao']].unique().to_dicts()
     
     print(f'Encontradas {len(stations)} estações para {poluente}')
     
@@ -120,19 +121,21 @@ def run_all(poluente, limite_conama, data_funcionamento):
     all_results = []
     
     # Processar cada estação individualmente
-    for i, station in enumerate(stations):
-        print(f'Processando estação {i+1}/{len(stations)}: {station}')
+    for i, station_info in enumerate(stations):
+        estado = station_info['Estado']
+        station = station_info['Estacao']
+        print(f'Processando estação {i+1}/{len(stations)}: {estado} - {station}')
         
-        # Carregar apenas dados da estação atual
+        # MODIFICADO: Filtrar por estado e estação
         station_dados = pl.concat([
             pl.scan_parquet(file)
-            .filter(pl.col('Estacao') == station)
+            .filter((pl.col('Estado') == estado) & (pl.col('Estacao') == station))
             .collect()
             for file in all_files
-        ])
+        ]).unique()
         
         if station_dados.is_empty():
-            print(f"  Sem dados para estação {station}")
+            print(f"  Sem dados para estação {station} em {estado}")
             continue
         
         # Converter para pandas e processar
@@ -141,7 +144,7 @@ def run_all(poluente, limite_conama, data_funcionamento):
         
         # Verificar se temos o poluente necessário
         if station_df.empty:
-            print(f"  Sem dados do poluente {poluente} para estação {station}")
+            print(f"  Sem dados do poluente {poluente} para estação {station} em {estado}")
             continue
             
         # Obter os períodos aplicáveis
@@ -153,7 +156,7 @@ def run_all(poluente, limite_conama, data_funcionamento):
             try:
                 aggregated = aggregate_data(station_df, periodo)
             except ValueError as e:
-                print(f"  Skipping {station} ({periodo}): {e}")
+                print(f"  Skipping {estado} - {station} ({periodo}): {e}")
                 continue
             
             # Adicionar limites e excedências
